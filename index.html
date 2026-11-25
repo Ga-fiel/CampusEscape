@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CampusEscape · 技术切片</title>
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="start">
+  <div class="panel">
+    <h1>CampusEscape</h1>
+    <p class="sub">CampusEscape · 技术切片</p>
+    <p class="hint" id="hint">WASD 移动 · 鼠标看向 · 避开老师视线，摸到前方黑板处逃出</p>
+    <button id="startBtn">点击开始</button>
+    <p class="note">黑板底 + 白色粉笔描边 + 排线阴影，全部由 GLSL 实时生成，零图片零模型</p>
+  </div>
+</div>
+<script>
+// 调试/截图模式：?shot=1 隐藏开始遮罩，并把 shader 编译等错误显示到屏幕上
+window.__errs = [];
+const _ce = console.error;
+console.error = function (...a) { window.__errs.push(a.map(String).join(' ')); _ce.apply(console, a); };
+window.addEventListener('error', e => window.__errs.push(String(e.message)));
+if (new URLSearchParams(location.search).has('shot')) {
+  document.getElementById('start').classList.add('hidden');
+  const box = document.createElement('div');
+  box.id = 'errbox';
+  box.style.cssText = 'position:fixed;left:0;top:0;z-index:999;color:#f66;background:#000a;font:12px monospace;max-width:100vw;white-space:pre-wrap';
+  document.body.appendChild(box);
+  setInterval(() => { box.textContent = window.__errs.join('\n'); }, 300);
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
