@@ -1,0 +1,8 @@
+{
+  "name": "campus-escape-local-test",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "three": "./vendor/three/three.module.js"
+  }
+}

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CampusEscape · 技术切片</title>
+<title>CampusEscape · 三楼</title>
 <link rel="stylesheet" href="./style.css">
 <script type="importmap">
 {
@@ -15,15 +15,46 @@
 </head>
 <body>
 <canvas id="game"></canvas>
+
+<div id="hud">
+  <div id="crosshair"></div>
+  <div id="lookWarning">👁 老师要回头了</div>
+  <div id="noise">嘈杂！</div>
+
+  <div id="suspicion">
+    <div class="meter"><div id="suspicionFill"></div></div>
+    <span id="suspicionText">0%</span>
+  </div>
+
+  <div id="intro">
+    <p><b>WASD</b> 移动　<b>鼠标</b> 观察</p>
+    <p><b>按住 Shift</b> 蹲下　<b>E</b> 拾取　<b>F</b> 推门/交互</p>
+    <p class="goal">目标：从教室后门出去，看看走廊里有什么</p>
+  </div>
+
+  <div id="crouch">蹲行中</div>
+  <div id="interact">[F] 推门</div>
+  <div id="danger"></div>
+</div>
+
+<div id="ending" class="hidden">
+  <div class="panel ending-panel">
+    <h2 id="endingTitle"></h2>
+    <div id="endingBody"></div>
+    <p id="endingAction">[R] 从座位重来</p>
+  </div>
+</div>
+
 <div id="start">
   <div class="panel">
     <h1>CampusEscape</h1>
-    <p class="sub">CampusEscape · 技术切片</p>
-    <p class="hint" id="hint">WASD 移动 · 鼠标看向 · 避开老师视线，摸到前方黑板处逃出</p>
+    <p class="sub">三楼 · 我的教室</p>
+    <p class="hint" id="startHint">WASD 移动 · 按住 Shift 蹲下 · 鼠标观察 · E 推门</p>
     <button id="startBtn">点击开始</button>
-    <p class="note">黑板底 + 白色粉笔描边 + 排线阴影，全部由 GLSL 实时生成，零图片零模型</p>
+    <p class="note">老师背身写板书时移动，回头时别暴露。撞到桌椅会发出声音。</p>
   </div>
 </div>
+
 <script>
 // 调试/截图模式：?shot=1 隐藏开始遮罩，并把 shader 编译等错误显示到屏幕上
 window.__errs = [];

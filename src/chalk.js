@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 // ============================================================
 // 第一遍：把场景画成「粉笔数据」，不是最终颜色
-//   R = shade(明暗)   G = chalk(粉笔强度)   B,A = 世界法线 xy
+//   R = shade(明暗)   G = 墨水色索引(0..1 表示调色板位置)   B,A = 世界法线 xy
 // ============================================================
 const chalkVert = /* glsl */`
 varying vec3 vN;
@@ -13,21 +13,47 @@ void main() {
 
 const chalkFrag = /* glsl */`
 uniform vec3 uLightDir;
+uniform float uInkIndex;   // 该物体使用的墨水色在调色板中的归一化位置 [0,1]
 varying vec3 vN;
 void main() {
   vec3 n = normalize(vN);
   if (!gl_FrontFacing) n = -n;              // 教室从内部看到盒子背面，翻正法线
   float shade = clamp(dot(n, normalize(uLightDir)) * 0.5 + 0.5, 0.0, 1.0);
-  gl_FragColor = vec4(shade, 1.0, n.x, n.y);
+  gl_FragColor = vec4(shade, uInkIndex, n.x, n.y);
 }`;
 
-export function makeChalkMaterial() {
-  return new THREE.ShaderMaterial({
-    uniforms: { uLightDir: { value: new THREE.Vector3(0.45, 0.85, 0.35) } },
+// 墨色调色板：蓝色为主，混入绿/紫/赭/青，像一盒彩色钢笔。
+// 每个物体自带墨水色（item.ink 指定索引）；未指定时走旧 classify 兜底。
+// 索引 0..6：0蓝 1墨绿 2紫 3赭 4青 5近黑(黑板面) 6白粉笔(板书)。
+export const INK_PALETTE = [
+  [0.10, 0.19, 0.76],  // 0 蓝（默认）
+  [0.14, 0.42, 0.30],  // 1 墨绿
+  [0.42, 0.18, 0.55],  // 2 紫
+  [0.55, 0.30, 0.10],  // 3 赭
+  [0.10, 0.42, 0.60],  // 4 青
+  [0.10, 0.11, 0.14],  // 5 近黑（黑板面）
+  [0.90, 0.91, 0.85],  // 6 白粉笔（板书）
+];
+export const BOARD_INK_INDEX = 5;   // post 里识别黑板面用
+export const CHALK_INK_INDEX = 6;   // post 里识别板书白粉笔用
+
+
+// 材质池：同一 inkIndex 复用同一材质，避免每个 mesh 一份。
+const _matPool = new Map();
+export function makeChalkMaterial(inkIndex = 0) {
+  const key = inkIndex.toFixed(3);
+  if (_matPool.has(key)) return _matPool.get(key);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uLightDir: { value: new THREE.Vector3(0.38, 0.82, 0.42) },
+      uInkIndex: { value: inkIndex },
+    },
     vertexShader: chalkVert,
     fragmentShader: chalkFrag,
     side: THREE.DoubleSide,
   });
+  _matPool.set(key, mat);
+  return mat;
 }
 
 // ============================================================
@@ -47,6 +73,29 @@ uniform sampler2D tDepth;
 uniform vec2 uRes;
 varying vec2 vUv;
 
+// 白纸 + 蓝黑钢笔手绘风格（与参考「涂鸦」一致）
+const vec3 PAPER     = vec3(0.965, 0.955, 0.905);  // 米白纸
+const vec3 INK_BLUE  = vec3(0.10, 0.19, 0.76);     // 蓝色圆珠笔（默认/排线基准）
+const vec3 INK_GRAPH = vec3(0.18, 0.20, 0.30);     // 石墨灰（暗部排线更沉）
+
+// 调色板：与第一遍 INK_PALETTE 保持一致（0..6），按 t∈[0,1] 在 7 色间取。
+vec3 inkPalette(float t) {
+  t = clamp(t, 0.0, 1.0) * 6.0;
+  vec3 c0 = vec3(0.10, 0.19, 0.76); // 0 蓝
+  vec3 c1 = vec3(0.14, 0.42, 0.30); // 1 墨绿
+  vec3 c2 = vec3(0.42, 0.18, 0.55); // 2 紫
+  vec3 c3 = vec3(0.55, 0.30, 0.10); // 3 赭
+  vec3 c4 = vec3(0.10, 0.42, 0.60); // 4 青
+  vec3 c5 = vec3(0.10, 0.11, 0.14); // 5 近黑（黑板面）
+  vec3 c6 = vec3(0.90, 0.91, 0.85); // 6 白粉笔（板书）
+  if (t < 1.0) return mix(c0, c1, t);
+  if (t < 2.0) return mix(c1, c2, t - 1.0);
+  if (t < 3.0) return mix(c2, c3, t - 2.0);
+  if (t < 4.0) return mix(c3, c4, t - 3.0);
+  if (t < 5.0) return mix(c4, c5, t - 4.0);
+  return mix(c5, c6, t - 5.0);
+}
+
 float hash21(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
   p += dot(p, p + 45.32);
@@ -65,13 +114,21 @@ float linDepth(float z) {
   float n = 0.1, f = 100.0;              // 与相机 near/far 一致
   return (2.0 * n * f) / (f + n - (z * 2.0 - 1.0) * (f - n));
 }
+// 方向排线：沿 dir 平行、间距 spacing、线宽 width，返回 [0,1] 的笔画覆盖
+float stripes(vec2 p, vec2 dir, float spacing, float width) {
+  float t = dot(p, vec2(-dir.y, dir.x));
+  float f = abs(fract(t / spacing) - 0.5) * spacing;
+  float soft = width * 0.6;
+  return 1.0 - smoothstep(width * 0.5 - soft, width * 0.5 + soft, f);
+}
 
 void main() {
   vec2 px = 1.0 / uRes;
+  float sc = uRes.y / 900.0;                 // 分辨率归一，缩放稳定
 
   // 手绘抖动：噪声扰动采样坐标，线条歪而不齐；绑定屏幕坐标所以不闪烁
   vec2 wob = vec2(vnoise(vUv * 34.0 + 11.3), vnoise(vUv * 34.0 + 37.0)) - 0.5;
-  vec2 uv = vUv + wob * px * 1.6;
+  vec2 uv = vUv + wob * px * 1.4;
 
   vec4  c = texture2D(tInk, uv);
   float z = texture2D(tDepth, uv).x;
@@ -84,57 +141,61 @@ void main() {
   float zd = texture2D(tDepth, uv - vec2(0.0, px.y)).x;
   float lap = abs(1.0 / linDepth(zl) + 1.0 / linDepth(zr) - 2.0 * iw)
             + abs(1.0 / linDepth(zu) + 1.0 / linDepth(zd) - 2.0 * iw);
-  float edge = smoothstep(0.06, 0.28, lap / (iw + 1e-6));
+  float edge = smoothstep(0.07, 0.30, lap / (iw + 1e-7));
 
   vec4 sl = texture2D(tInk, uv - vec2(px.x, 0.0));
   vec4 sr = texture2D(tInk, uv + vec2(px.x, 0.0));
   vec4 su = texture2D(tInk, uv + vec2(0.0, px.y));
   vec4 sd = texture2D(tInk, uv - vec2(0.0, px.y));
   float nEdge = length(sl.ba - sr.ba) + length(su.ba - sd.ba);
-  edge = max(edge, smoothstep(0.35, 0.80, nEdge));
+  edge = max(edge, smoothstep(0.42, 0.85, nEdge));
 
-  float isGeo = step(z, 0.9999);          // 背景深度为 1
+  float isGeo = step(z, 0.99999);           // 背景深度为 1
   edge *= isGeo;
 
-  // ---- 粉笔排线：越暗画越多斜线 ----
+  // ---- 墨水排线：暗部越多斜线（以纸为稳定参考系，比屏幕更稳） ----
   float shade = c.r;
   float dark  = 1.0 - shade;
-  float a1 = 0.60;
-  float coord  = dot(uv * uRes, vec2(cos(a1), sin(a1))) / 7.0
-               + (vnoise(vUv * 38.0 + 5.0) - 0.5) * 0.25;  // 轻微手绘 waver，保持直线感
-  float coord2 = coord * 1.7 + vnoise(vUv * 33.0 + 9.0) * 0.15;
-  vec2 d3 = vec2(cos(-a1), sin(-a1));
-  float coord3 = dot(uv * uRes, d3) / 6.0 + vnoise(vUv * 30.0 + 21.0) * 0.18;
-
-  float s1 = 1.0 - smoothstep(0.0, 0.45, abs(fract(coord)  - 0.5) * 2.0);
-  float s2 = 1.0 - smoothstep(0.0, 0.45, abs(fract(coord2) - 0.5) * 2.0);
-  float s3 = 1.0 - smoothstep(0.0, 0.45, abs(fract(coord3) - 0.5) * 2.0);
-  // 任何几何体都有一层淡排线，暗部再叠加，避免地板/桌面死黑
-  float hatch = s1 * (0.35 + 0.65 * step(0.15, dark))
-              + s2 * step(0.40, dark)
-              + s3 * step(0.62, dark);
+  vec2 hp = gl_FragCoord.xy;
+  hp += (vnoise(hp * 0.16) - 0.5) * 2.2;    // 手绘 waver
+  float sp = 9.0 * sc;                       // 排线间距
+  float w  = 1.35 * sc;                      // 线宽
+  const vec2 d1 = vec2(0.7071, 0.7071);
+  const vec2 d2 = vec2(-0.7071, 0.7071);
+  const vec2 d3 = vec2(0.2588, 0.9659);
+  float h1 = stripes(hp, d1, sp, w);
+  float h2 = stripes(hp, d2, sp * 1.15, w);
+  float h3 = stripes(hp, d3, sp * 0.7, w);
+  // 只在偏暗处才起排线：大面积受光面（墙面/地板）保持干净留白
+  float hatch = h1 * smoothstep(0.52, 0.36, shade);
+  hatch = max(hatch, h2 * smoothstep(0.30, 0.20, shade));
+  hatch = max(hatch, h3 * smoothstep(0.18, 0.10, shade));
+  // 极暗处（背光天花板/侧墙）改用单组稀疏细线，避免三组叠加成网格纸
+  float hDeep = stripes(hp, d1, sp * 1.9, w * 0.7);
+  hatch = max(hatch, hDeep * smoothstep(0.14, 0.02, shade) * 0.6);
   hatch = clamp(hatch, 0.0, 1.0) * isGeo;
 
-  // ---- 粉笔颗粒：让线条断断续续，有摩擦感 ----
-  float grain = vnoise(uv * uRes * 1.25 + 2.0);
-  edge  *= 0.55 + 0.60 * grain;
-  hatch *= 0.50 + 0.70 * grain;
+  // 该像素所属物体的墨水色（第一遍把色相索引写在 G 通道）
+  vec3 inkCol = inkPalette(c.g);
+  // 排线在暗处偏石墨灰，亮处偏该物体的墨水色（层次感）
+  vec3 hatchInk = mix(inkCol, INK_GRAPH, smoothstep(0.3, 0.7, dark));
 
-  // ---- 黑板底：深墨绿 + 颗粒 + 淡淡擦痕 ----
-  float boardGrain = vnoise(vUv * uRes * 0.9) * 0.55 + vnoise(vUv * uRes * 0.18) * 0.45;
-  vec3 board = vec3(0.045, 0.062, 0.055) + boardGrain * 0.022;
-  float smudge = smoothstep(0.55, 0.88, vnoise(vUv * 7.0 + 3.0));
-  board += smudge * 0.018;
+  // ---- 纸底：米白 + 颗粒 + 极淡油墨不均 ----
+  float grain = vnoise(gl_FragCoord.xy * 0.8) * 0.6 + vnoise(gl_FragCoord.xy * 0.17) * 0.4;
+  vec3 paper = PAPER * (0.955 + 0.055 * grain);
+  paper += (vnoise(vUv * 6.0 + 7.0) - 0.5) * 0.012;
 
-  // ---- 合成 ----
-  vec3 chalkCol = vec3(0.92, 0.94, 0.90);
-  vec3 col = board;
-  col = mix(col, chalkCol, hatch * 0.42);
-  col = mix(col, chalkCol, clamp(edge, 0.0, 1.0) * 0.95);
+  // ---- 合成：纸 → 排线 → 描边 ----
+  vec3 col = paper;
+  col = mix(col, hatchInk, hatch * 0.62);
+  // 描边手绘粗细抖动，用该物体的墨水色描线（多色描边）
+  float ew = 0.75 + 0.35 * vnoise(gl_FragCoord.xy * 0.35);
+  vec3 lineCol = inkCol * 0.92;
+  col = mix(col, lineCol, clamp(edge * ew, 0.0, 1.0) * 0.95);
 
-  // 暗角：整体更昏暗
+  // 极轻暗角（白纸不压太黑，仅收边）
   vec2 q = vUv - 0.5;
-  col *= 1.0 - dot(q, q) * 0.75;
+  col *= 1.0 - dot(q, q) * 0.12;
 
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -147,7 +208,7 @@ export class ChalkRenderer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x000000);
+    this.scene.background = new THREE.Color(0xf6f4e8); // 纸白清屏色（后处理会覆盖，仅作底）
     this.camera = new THREE.PerspectiveCamera(72, 1, 0.1, 100);
 
     // 存「粉笔数据」的 RenderTarget + 深度纹理

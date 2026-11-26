@@ -1,58 +1,141 @@
 import * as THREE from 'three';
-import { makeChalkMaterial } from './chalk.js';
+import { buildScene, buildShell, createMaterial, PREFABS, buildClassmateShape } from './scene/scene-build.js';
+import { normalizeScene } from './scene/schema.js';
+import { SCENE, DESK_GRID, shouldHaveStudent, studentPoseOf, booksOf } from './scene/scene-data.js';
 
-// 教室尺寸
-export const ROOM = { w: 16, h: 4.2, d: 22 };
+// ============================================================
+// 关卡构建 —— 数据在 scene/scene-data.js，这里只负责「按数据长出来」，
+// 顺手把碰撞盒、遮挡盒、关键点整理成 AI 与玩家共用的运行时状态。
+// ============================================================
 
-// 碰撞盒（AABB，仅 XZ 平面足够做第一人称行走）
+const normalized = normalizeScene(SCENE);
+
+export const ROOM = { ...normalized.room };
+export const PLAYER_START = new THREE.Vector3(...normalized.markers.playerStart);
+export const TEACHER_DESK = new THREE.Vector3(...normalized.markers.teacherDesk);
+export const PATROL_POINTS = normalized.markers.patrolPoints.map(p => new THREE.Vector3(...p));
+export const BACK_DOOR = { ...normalized.markers.backDoor };
+export const SCENE_DATA = normalized;
+
 export const walls = [];
+export const occluders = [];
 
-function box(scene, mat, w, h, d, x, y, z, collide = false) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-  m.position.set(x, y, z);
-  scene.add(m);
-  if (collide) {
-    walls.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
+// 桌椅、学生这些批量件：默认由 DESK_GRID 生成，
+// 如果场景 JSON 里已经有同 id 的条目，以 JSON 为准（编辑器存回来的就是这样）。
+function buildDeskGrid(mat, scene, pushBox) {
+  const grid = DESK_GRID;
+  const items = [];
+  for (let row = 0; row < grid.rows; row++) {
+    for (let col = 0; col < grid.cols; col++) {
+      const x = grid.originX + col * grid.stepX;
+      const z = grid.originZ + row * grid.stepZ;
+      const isPlayerSeat = row === grid.playerSeat.row && col === grid.playerSeat.col;
+      const key = `${row}-${col}`;
+
+      const deskFlags = { collide: true, noise: true, occlude: true, tag: 'desk' };
+      items.push({
+        id: `desk-${key}`,
+        type: 'prefab',
+        prefab: 'desk',
+        pos: [x, 0, z],
+        params: {
+          width: grid.deskWidth,
+          depth: grid.deskDepth,
+          topY: grid.deskTopY,
+          topThickness: grid.deskTopThickness,
+        },
+        flags: deskFlags,
+        // prefab 的碰撞盒单独声明，因为 prefab 不一定只有一个盒子。
+        colliders: [{
+          pos: [0, grid.deskTopY, 0],
+          size: [grid.deskWidth, grid.deskTopThickness, grid.deskDepth],
+          flags: deskFlags,
+        }],
+        label: `课桌 ${row + 1}-${col + 1}`,
+      });
+
+      // 椅子在桌子南侧；出生椅不碰撞，避免醒来时误判噪声。
+      const chairFlags = { collide: !isPlayerSeat, noise: !isPlayerSeat, occlude: false, tag: 'chair' };
+      items.push({
+        id: `chair-${key}`,
+        type: 'prefab',
+        prefab: 'chair',
+        pos: [x, 0, z + grid.chairOffsetZ],
+        flags: chairFlags,
+        colliders: [{
+          pos: [0, 0.48, 0],
+          size: [0.72, 0.1, 0.68],
+          flags: chairFlags,
+        }],
+        label: `椅子 ${row + 1}-${col + 1}`,
+      });
+
+      for (const b of booksOf(row, col)) {
+        items.push({
+          id: b.id,
+          type: 'prefab',
+          prefab: 'book',
+          pos: [x + b.x, 0, z + b.z],
+          params: { seed: b.seed },
+        });
+      }
+
+      if (shouldHaveStudent(row, col, isPlayerSeat)) {
+        items.push({
+          id: `student-${key}`,
+          type: 'prefab',
+          prefab: 'classmate',
+          pos: [x, 0, z],
+          params: { pose: studentPoseOf(row, col) },
+          label: `同学 ${row + 1}-${col + 1}`,
+        });
+      }
+    }
   }
-  return m;
+  return items;
 }
 
 export function buildClassroom(scene) {
-  const mat = makeChalkMaterial();
-  const { w, h, d } = ROOM;
+  const mat = scene.userData.__classroomMat || createMaterial();
+  scene.userData.__classroomMat = mat;
+  walls.length = 0;
+  occluders.length = 0;
 
-  // 地面与天花板
-  box(scene, mat, w, 0.2, d, 0, -0.1, 0);
-  box(scene, mat, w, 0.2, d, 0, h + 0.1, 0);
-  // 四面墙
-  box(scene, mat, w, h, 0.2, 0, h / 2, -d / 2, true);
-  box(scene, mat, w, h, 0.2, 0, h / 2, d / 2, true);
-  box(scene, mat, 0.2, h, d, -w / 2, h / 2, 0, true);
-  box(scene, mat, 0.2, h, d, w / 2, h / 2, 0, true);
+  const pushBox = (box) => {
+    if (box.collide) walls.push(box);
+    if (box.occlude) occluders.push(box);
+  };
 
-  // 黑板（前墙）
-  box(scene, mat, 9, 2.4, 0.12, 0, 2.3, -d / 2 + 0.18);
-  // 讲台
-  box(scene, mat, 3.2, 1.1, 1.2, 0, 0.55, -d / 2 + 1.6, true);
+  // 1) 房间外壳
+  buildShell(scene, ROOM, pushBox);
 
-  // 课桌 3 列 x 5 排
-  for (let row = 0; row < 5; row++) {
-    for (let col = 0; col < 3; col++) {
-      const x = -4.6 + col * 4.6;
-      const z = -5.5 + row * 3.0;
-      box(scene, mat, 1.8, 0.12, 0.9, x, 0.95, z, true);     // 桌面
-      // 四条腿
-      for (const sx of [-0.75, 0.75]) {
-        for (const sz of [-0.32, 0.32]) {
-          box(scene, mat, 0.1, 0.95, 0.1, x + sx, 0.475, z + sz);
-        }
-      }
-      box(scene, mat, 1.8, 0.8, 0.12, x, 1.45, z - 0.39);    // 椅背
-    }
+  // 2) 场景 JSON 里的显式物体
+  const { root } = buildScene(scene, SCENE_DATA, pushBox);
+
+  // 3) 批量桌椅与学生：JSON 里已有同 id 就跳过（编辑器保存过的场景）
+  const existing = new Set(SCENE_DATA.objects.map(o => o.id));
+  const batch = buildDeskGrid(mat, scene, pushBox).filter(o => !existing.has(o.id));
+  if (batch.length) {
+    const batchData = normalizeScene({ objects: batch });
+    const sub = buildScene(root, batchData, pushBox);
+    sub.root.name = 'desk-grid';
   }
 
-  // 走廊尽头的「出口」门框（后墙中央），用两根立柱 + 横梁表现
-  box(scene, mat, 0.18, 2.8, 0.18, -1.3, 1.4, d / 2 - 0.2);
-  box(scene, mat, 0.18, 2.8, 0.18, 1.3, 1.4, d / 2 - 0.2);
-  box(scene, mat, 2.8, 0.18, 0.18, 0, 2.8, d / 2 - 0.2);
+  return root;
 }
+
+export function isInExitZone(pos) {
+  return Math.abs(pos.x - BACK_DOOR.x) <= BACK_DOOR.halfWidth && pos.z >= BACK_DOOR.interactZ;
+}
+
+// 供工具页复用：拿到「当前场景数据」，包含批量桌椅在内。
+export function getFullSceneData() {
+  const batch = buildDeskGrid(null, null, () => {});
+  const ids = new Set(SCENE_DATA.objects.map(o => o.id));
+  return {
+    ...SCENE_DATA,
+    objects: [...SCENE_DATA.objects, ...batch.filter(o => !ids.has(o.id))],
+  };
+}
+
+export { PREFABS, buildClassmateShape };
