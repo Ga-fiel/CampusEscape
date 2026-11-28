@@ -1,7 +1,7 @@
 // 巡逻 NPC：路径点巡逻 + 视野锥 + 锁敌 + 盘问。
 // 状态机：PATROL（按路线走）→ SUSPICIOUS（盯住、累积注意值）→ CHASE（追过来）
 //        → TALK（走到跟前，交给游戏层弹对话）→ RETURN（走回路线）
-import * as THREE from 'three';
+import * as THREE from '../vendor/three/three.module.js';
 import { makeInkMaterial, INK } from './render.js';
 
 const _v = new THREE.Vector3();
@@ -35,6 +35,8 @@ export class Npc {
     this.heatScale = 1;                                   // 可疑度越高，注意值涨得越快
 
     this.pos = this.patrol[0].clone();
+    // 楼层：箱庭隔离用。不给就按初始高度猜（FH = 4）
+    this.floor = opts.floor ?? Math.max(0, Math.round(this.pos.y / 4));
     this.idx = 0;
     this.waitT = 0;
     this.forward = new THREE.Vector3(0, 0, -1);

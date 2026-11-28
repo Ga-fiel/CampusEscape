@@ -1,6 +1,6 @@
 // 精简第一人称控制器：走 / 跑 / 蹲 / 跳 / 蹲下钻低洞。
 // 相比原项目 player.js 砍掉了武器、抓钩、滑铲、墙跳、空中冲刺。
-import * as THREE from 'three';
+import * as THREE from '../vendor/three/three.module.js';
 import { makeBody } from './physics.js';
 import { clamp } from './util.js';
 
@@ -101,11 +101,10 @@ export class Player {
       return;
     }
 
-    // ---- 蹲 / 起（教室里只能蹲着走） ----
-    if (this.inClassroom) {
-      this.crouching = true;
-      b.height = CROUCH_H;
-    } else if (input.crouch) {
+    // ---- 蹲 / 起 ----
+    // 教室里不再强制蹲（用户要求取消）。inClassroom 字段仍保留 —— NPC 的视线判定要用它
+    // 判断"是不是在教室里"，只是不再拿它来锁玩家的姿态。
+    if (input.crouch) {
       this.crouching = true;
       b.height = CROUCH_H;
     } else if (this.crouching) {

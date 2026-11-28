@@ -1,6 +1,6 @@
 // Ink renderer: scene is drawn into a data buffer (shade, inkId, normal.xy) + depth, then a
 // full-screen "pen on lined paper" pass draws outlines, hatching, paper grain and ruled lines.
-import * as THREE from 'three';
+import * as THREE from '../vendor/three/three.module.js';
 
 export const INK = { BLUE: 0, RED: 1, BLACK: 2, ORANGE: 3, GREEN: 4, PINK: 5 };
 export const INK_COLORS = [

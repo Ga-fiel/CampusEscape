@@ -1,75 +1,234 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CampusEscape · 三楼</title>
-<link rel="stylesheet" href="./style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>逃学模拟器 · 骨架</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #f4f1e6; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  canvas#c { display: block; width: 100%; height: 100%; }
+
+  #hud { position: fixed; inset: 0; pointer-events: none; user-select: none; z-index: 10; }
+
+  #items {
+    position: absolute; left: 18px; top: 16px;
+    font-size: 13px; line-height: 1.7; color: #1d2b6e; letter-spacing: .5px;
+  }
+  #items .t { opacity: .45; font-size: 11px; letter-spacing: 2px; }
+  #items .it { display: inline-block; margin-right: 10px; padding: 1px 8px;
+    border: 1.5px solid #1d2b6e; border-radius: 3px; }
+
+  #alertWrap {
+    position: absolute; right: 20px; top: 18px; width: 215px;
+  }
+  #alertWrap .lab { font-size: 11px; letter-spacing: 2px; color: #a01c28; opacity: .7; }
+  #alertNum { font-size: 13px; letter-spacing: 0; font-weight: 600; opacity: 1; }
+  #alertBar {
+    margin-top: 5px; height: 9px; border: 1.5px solid #a01c28; border-radius: 2px;
+    background: rgba(255,255,255,.5); overflow: hidden;
+  }
+  #alertFill { height: 100%; width: 0%; background: #a01c28; transition: width .12s linear; }
+
+  #bell { margin-top: 7px; font-size: 11px; letter-spacing: 1px; color: #1d2b6e; opacity: .55; }
+  #bell.hot { color: #a01c28; opacity: 1; font-weight: 600; }
+
+  #dialogue {
+    position: absolute; left: 50%; bottom: 46px; transform: translateX(-50%);
+    width: min(680px, 88vw); display: none;
+    border: 2px solid #1d2b6e; border-radius: 5px;
+    background: rgba(255,255,255,.97);
+    padding: 15px 20px 14px;
+    pointer-events: auto;
+    box-shadow: 0 6px 0 rgba(29,43,110,.10);
+  }
+  #dialogue.on { display: block; }
+  #dialogue .who { font-size: 12px; letter-spacing: 3px; color: #a01c28; margin-bottom: 8px; }
+  #dialogue .say { font-size: 16px; color: #1d2b6e; margin-bottom: 13px; line-height: 1.6; }
+  #dialogue .opts { display: flex; flex-direction: column; gap: 7px; }
+  #dialogue button {
+    font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+    padding: 9px 12px; border: 1.5px solid #1d2b6e; border-radius: 3px;
+    background: #fff; color: #1d2b6e; letter-spacing: .5px;
+  }
+  #dialogue button:hover:not(:disabled) { background: #eef1ff; }
+  #dialogue button:disabled { opacity: .35; cursor: default; border-style: dashed; }
+  #dialogue button b { color: #a01c28; margin-right: 9px; }
+  #dialogue button i { font-style: normal; font-size: 11px; opacity: .5; margin-left: 8px; }
+
+  #tip {
+    position: absolute; left: 50%; bottom: 92px; transform: translateX(-50%);
+    font-size: 15px; color: #1d2b6e; background: rgba(255,255,255,.82);
+    border: 1.5px solid #1d2b6e; border-radius: 4px; padding: 7px 18px;
+    opacity: 0; transition: opacity .12s;
+  }
+  #tip.on { opacity: 1; }
+  #tip b { color: #a01c28; }
+
+  /* 翻找进度条：按住 E 站定 2 秒，走开就中断 */
+  #search {
+    position: absolute; left: 50%; bottom: 140px; transform: translateX(-50%);
+    width: 230px; text-align: center; opacity: 0; transition: opacity .12s;
+  }
+  #search.on { opacity: 1; }
+  #search .lab { font-size: 12px; letter-spacing: 2px; color: #1d2b6e; opacity: .7; margin-bottom: 6px; }
+  #searchBar {
+    height: 9px; border: 1.5px solid #1d2b6e; border-radius: 2px;
+    background: rgba(255,255,255,.6); overflow: hidden;
+  }
+  #searchFill { height: 100%; width: 0%; background: #a01c28; }
+
+  /* 后山跑酷：倒计时 + 检查点。挂在右上角可疑度下面 */
+  #parkour {
+    position: absolute; right: 20px; top: 116px; width: 215px;
+    opacity: 0; transition: opacity .2s;
+  }
+  #parkour.on { opacity: 1; }
+  #parkour .lab { font-size: 11px; letter-spacing: 2px; color: #1d2b6e; opacity: .7; }
+  #parkour .lab b { color: #a01c28; font-size: 14px; letter-spacing: 1px; }
+  #pkBar {
+    margin-top: 5px; height: 9px; border: 1.5px solid #1d2b6e; border-radius: 2px;
+    background: rgba(255,255,255,.5); overflow: hidden;
+  }
+  #pkFill { height: 100%; width: 100%; background: #1d2b6e; transition: width .12s linear; }
+  #pkFill.low { background: #a01c28; }
+  #pkCp { margin-top: 7px; font-size: 11px; letter-spacing: 1px; color: #1d2b6e; opacity: .55; }
+
+  #ver { position: absolute; left: 18px; bottom: 14px; font-size: 10px; letter-spacing: 2px; color: #1d2b6e; opacity: .35; }
+
+  #floorTag {
+    position: absolute; left: 50%; top: 16px; transform: translateX(-50%);
+    font-size: 12px; letter-spacing: 4px; color: #1d2b6e; opacity: .45;
+  }
+
+  /* 切层用的假加载黑场：只盖画面，不吃鼠标，HUD 文字仍在上面 */
+  #fade {
+    position: fixed; inset: 0; background: #f4f1e6;
+    opacity: 0; pointer-events: none; z-index: 5;
+  }
+
+  #noticeLayer { position: absolute; inset: 0; overflow: hidden; }
+  .nbar {
+    position: absolute; width: 46px; height: 5px;
+    margin-left: -23px; margin-top: -8px;
+    border: 1px solid #a01c28; background: rgba(255,255,255,.6);
+    display: none;
+  }
+  .nbar i { display: block; height: 100%; width: 0%; background: #a01c28; transition: width .06s linear; }
+
+  #msg {
+    position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
+    text-align: center; font-size: 22px; color: #1d2b6e; letter-spacing: 2px;
+    opacity: 0; transition: opacity .25s;
+  }
+  #msg.on { opacity: 1; }
+  #msg .sub { margin-top: 10px; font-size: 13px; opacity: .6; letter-spacing: 1px; }
+
+  #start {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px;
+    background: rgba(244,241,230,.92); cursor: pointer; pointer-events: auto;
+  }
+  #start h1 { font-size: 30px; letter-spacing: 8px; color: #1d2b6e; font-weight: 600; }
+  #start p { font-size: 13px; color: #1d2b6e; opacity: .55; letter-spacing: 1px; line-height: 2; text-align: center; }
+  #start .k { border: 1.5px solid #1d2b6e; border-radius: 3px; padding: 0 6px; margin: 0 2px; }
+  #start.hide { display: none; }
+
+  #err {
+    position: absolute; left: 12px; bottom: 12px; max-width: 70%;
+    font-family: Consolas, monospace; font-size: 12px; color: #a01c28;
+    white-space: pre-wrap; display: none;
+  }
+
+  #gameover {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(244,241,230,.95);
+    pointer-events: auto; z-index: 40;
+  }
+  #gameover.on { display: flex; }
+  #gameover .box { text-align: center; }
+  #gameover h2 { font-size: 30px; letter-spacing: 8px; color: #a01c28; font-weight: 600; }
+  #gameover p { margin-top: 12px; font-size: 13px; color: #1d2b6e; opacity: .6; letter-spacing: 1px; }
+  #gameover button {
+    margin-top: 22px; padding: 9px 30px; font: inherit; font-size: 14px;
+    letter-spacing: 2px; cursor: pointer; color: #1d2b6e;
+    background: #fff; border: 2px solid #1d2b6e; border-radius: 3px;
+  }
+  #gameover button:hover { background: #eef1ff; }
+</style>
 <script type="importmap">
 {
   "imports": {
-    "three": "./vendor/three/three.module.js"
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/addons/"
   }
 }
 </script>
 </head>
 <body>
-<canvas id="game"></canvas>
+<canvas id="c"></canvas>
+<div id="fade"></div>
 
 <div id="hud">
-  <div id="crosshair"></div>
-  <div id="lookWarning">👁 老师要回头了</div>
-  <div id="noise">嘈杂！</div>
-
-  <div id="suspicion">
-    <div class="meter"><div id="suspicionFill"></div></div>
-    <span id="suspicionText">0%</span>
+  <div id="noticeLayer"></div>
+  <div id="items"><div class="t">身上</div><div id="itemList">—</div></div>
+  <div id="floorTag">三 楼</div>
+  <div id="alertWrap">
+    <div class="lab">可疑度 <span id="alertNum">0%</span></div>
+    <div id="alertBar"><div id="alertFill"></div></div>
+    <div id="bell">班主任巡查 5:00</div>
   </div>
-
-  <div id="intro">
-    <p><b>WASD</b> 移动　<b>鼠标</b> 观察</p>
-    <p><b>按住 Shift</b> 蹲下　<b>E</b> 拾取　<b>F</b> 推门/交互</p>
-    <p class="goal">目标：从教室后门出去，看看走廊里有什么</p>
+  <div id="parkour">
+    <div class="lab">剩余时间 <b id="pkTime">0:45</b></div>
+    <div id="pkBar"><div id="pkFill"></div></div>
+    <div id="pkCp">检查点 山脚</div>
   </div>
-
-  <div id="crouch">蹲行中</div>
-  <div id="interact">[F] 推门</div>
-  <div id="danger"></div>
+  <div id="dialogue">
+    <div class="who" id="dlgWho"></div>
+    <div class="say" id="dlgSay"></div>
+    <div class="opts" id="dlgOpts"></div>
+  </div>
+  <div id="tip"></div>
+  <div id="search">
+    <div class="lab" id="searchLab">翻找中</div>
+    <div id="searchBar"><div id="searchFill"></div></div>
+  </div>
+  <div id="msg"></div>
+  <div id="ver">BUILD</div>
 </div>
 
-<div id="ending" class="hidden">
-  <div class="panel ending-panel">
-    <h2 id="endingTitle"></h2>
-    <div id="endingBody"></div>
-    <p id="endingAction">[R] 从座位重来</p>
+<div id="gameover">
+  <div class="box">
+    <h2>被 抓 住 了</h2>
+    <p id="goReason"></p>
+    <button id="goSave">回 到 存 档 点</button>
+    <button id="goBtn">重 新 开 始</button>
   </div>
 </div>
 
 <div id="start">
-  <div class="panel">
-    <h1>CampusEscape</h1>
-    <p class="sub">三楼 · 我的教室</p>
-    <p class="hint" id="startHint">WASD 移动 · 按住 Shift 蹲下 · 鼠标观察 · E 推门</p>
-    <button id="startBtn">点击开始</button>
-    <p class="note">老师背身写板书时移动，回头时别暴露。撞到桌椅会发出声音。</p>
-  </div>
+  <h1>逃 学 模 拟 器</h1>
+  <p>
+    <span class="k">W A S D</span> 移动　<span class="k">Shift</span> 跑　<span class="k">C</span> 蹲　<span class="k">空格</span> 跳　<span class="k">E</span> 交互<br>
+    别让教导主任盯上你。可疑度满了，就会被拎回教室。<br>
+    <span style="opacity:.7">点击这里开始 · Esc 释放鼠标</span>
+  </p>
 </div>
 
-<script>
-// 调试/截图模式：?shot=1 隐藏开始遮罩，并把 shader 编译等错误显示到屏幕上
-window.__errs = [];
-const _ce = console.error;
-console.error = function (...a) { window.__errs.push(a.map(String).join(' ')); _ce.apply(console, a); };
-window.addEventListener('error', e => window.__errs.push(String(e.message)));
-if (new URLSearchParams(location.search).has('shot')) {
-  document.getElementById('start').classList.add('hidden');
-  const box = document.createElement('div');
-  box.id = 'errbox';
-  box.style.cssText = 'position:fixed;left:0;top:0;z-index:999;color:#f66;background:#000a;font:12px monospace;max-width:100vw;white-space:pre-wrap';
-  document.body.appendChild(box);
-  setInterval(() => { box.textContent = window.__errs.join('\n'); }, 300);
-}
+<script type="module">
+  window.addEventListener('error', (e) => {
+    const el = document.getElementById('err') || document.body.appendChild(Object.assign(document.createElement('div'), { id: 'err' }));
+    el.style.display = 'block';
+    el.textContent = 'ERROR: ' + (e.message || e.error) + '\n' + (e.filename || '') + ':' + (e.lineno || '');
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const el = document.getElementById('err') || document.body.appendChild(Object.assign(document.createElement('div'), { id: 'err' }));
+    el.style.display = 'block';
+    el.textContent = 'PROMISE: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason);
+  });
 </script>
-<script type="module" src="./src/main.js"></script>
+<script type="module" src="./src/game.js"></script>
 </body>
 </html>

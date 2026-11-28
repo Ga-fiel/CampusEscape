@@ -1,5 +1,5 @@
 // Axis-aligned box world: static colliders, spatial hash, swept body movement with step-up, raycasts.
-import * as THREE from 'three';
+import * as THREE from '../vendor/three/three.module.js';
 
 const EPS = 1e-4;
 const AX = ['x', 'y', 'z'];
@@ -80,15 +80,26 @@ export class World {
     if (rx === 0 && rz === 0) return;
     const nx = p.x, nz = p.z; let stepped = false;
     if (canStep && body.stepHeight > 0) {
-      p.x = ox; p.z = oz; p.y = oy + body.stepHeight;
-      if (!this.overlapsBody(body)) {
+      // 逐档尝试抬升：从最小档开始，取第一档能真正往前走的。
+      // 【不能一次抬满 stepHeight】三层双跑楼梯的上一段就压在下一段正上方
+      // （1F→2F 的西跑，头顶 4.0m 处正是 2F→3F 的西跑）。站立玩家身高 1.75，
+      // 站在 1.83m 的台阶上抬满 0.55m 后头顶到 4.13m，必然撞进上层梯段，
+      // 判定永远失败 —— 表现为"所有楼梯都走不上去、只能跳"。
+      // 蹲下身高 0.72 抬满只到 3.10m 撞不到，所以蹲着反而能上楼。
+      // 单级台阶 rise 只有 0.167m，抬 0.18m 就够，头顶只到 3.76m。
+      const tries = [];
+      for (let h = 0.18; h < body.stepHeight - 1e-6; h += 0.18) tries.push(h);
+      tries.push(body.stepHeight);
+      for (const h of tries) {
+        p.x = ox; p.z = oz; p.y = oy + h;
         p.x += dx; const rx2 = this._resolveAxis(body, 0, dx);
         p.z += dz; const rz2 = this._resolveAxis(body, 2, dz);
-        p.y -= body.stepHeight; this._resolveAxis(body, 1, -body.stepHeight);
+        p.y -= h; this._resolveAxis(body, 1, -h);
         const d1 = (nx - ox) ** 2 + (nz - oz) ** 2, d2 = (p.x - ox) ** 2 + (p.z - oz) ** 2;
         if (d2 > d1 + 1e-6 && p.y >= oy - 1e-3 && !this.overlapsBody(body)) {
           stepped = true; body._bx = rx2; body._bz = rz2;
           if (rx2 !== 0 || rz2 !== 0) { body.hitWall = true; body.wallNormal.set(rx2, 0, rz2).normalize(); }
+          break;
         }
       }
       if (!stepped) { p.x = nx; p.z = nz; p.y = oy; }
